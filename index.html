@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Krypton Vault — 密码管理器</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔐</text></svg>">
+</head>
+<body>
+    <!-- 动态背景 -->
+    <div class="bg-animated">
+        <div class="bg-blob bg-blob-1"></div>
+        <div class="bg-blob bg-blob-2"></div>
+        <div class="bg-blob bg-blob-3"></div>
+    </div>
+
+    <!-- 锁定界面 -->
+    <div id="lockScreen" class="screen active">
+        <canvas id="particleCanvas"></canvas>
+        <div class="glass-card lock-card">
+            <div class="lock-icon">
+                <svg viewBox="0 0 80 80" fill="none" stroke="currentColor" stroke-width="3">
+                    <rect x="18" y="35" width="44" height="38" rx="8"/>
+                    <path d="M28 35v-10a12 12 0 0 1 24 0v10" stroke-linecap="round"/>
+                    <circle cx="40" cy="55" r="4" fill="currentColor"/>
+                    <line x1="40" y1="58" x2="40" y2="64" stroke-linecap="round"/>
+                </svg>
+            </div>
+            <h1 class="app-title" contenteditable="true" spellcheck="false" id="appTitle">Krypton Vault</h1>
+            <p class="lock-subtitle">点击标题可自定义名称</p>
+
+            <div id="setupSection">
+                <p class="setup-hint">首次使用？设置您的主密码</p>
+                <div class="input-group">
+                    <input type="password" id="masterSetup" placeholder="设置主密码" autocomplete="off">
+                    <div class="password-strength" id="strengthBar"></div>
+                </div>
+                <div class="input-group">
+                    <input type="password" id="masterSetupConfirm" placeholder="确认主密码" autocomplete="off">
+                </div>
+                <button class="btn-primary" id="btnSetup">创建保险库</button>
+            </div>
+
+            <div id="unlockSection" class="hidden">
+                <div class="input-group">
+                    <input type="password" id="masterUnlock" placeholder="输入主密码解锁" autocomplete="off">
+                </div>
+                <button class="btn-primary" id="btnUnlock">解锁</button>
+                <p class="error-msg" id="unlockError"></p>
+                <button class="btn-link" id="btnReset">重置保险库</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 主界面 -->
+    <div id="mainScreen" class="screen">
+        <!-- 顶部导航 -->
+        <header class="glass-header">
+            <div class="header-left">
+                <h2 class="header-title" id="headerTitle">Krypton Vault</h2>
+            </div>
+            <div class="header-right">
+                <button class="btn-icon" id="btnGenerator" title="密码生成器">🔑</button>
+                <button class="btn-icon" id="btnSettings" title="设置">⚙️</button>
+                <button class="btn-icon" id="btnLock" title="锁定">🔒</button>
+            </div>
+        </header>
+
+        <!-- 搜索栏 -->
+        <div class="search-wrapper">
+            <div class="glass-card search-card">
+                <svg class="search-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+                <input type="text" id="searchInput" placeholder="搜索密码条目..." autocomplete="off">
+                <button class="btn-primary btn-sm" id="btnAdd">+ 新增</button>
+            </div>
+        </div>
+
+        <!-- 分类筛选 -->
+        <div class="category-bar" id="categoryBar">
+            <!-- 动态渲染，JS 填充 -->
+        </div>
+
+        <!-- 密码列表 -->
+        <div class="vault-container">
+            <div id="entryList" class="entry-list"></div>
+            <div id="emptyState" class="empty-state hidden">
+                <div class="empty-icon">🗄️</div>
+                <p>还没有保存任何密码</p>
+                <p class="empty-hint">点击 "+ 新增" 开始使用</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 新增/编辑弹窗 -->
+    <div id="entryModal" class="modal">
+        <div class="modal-backdrop"></div>
+        <div class="glass-card modal-card">
+            <div class="modal-header">
+                <h3 id="modalTitle">新增密码</h3>
+                <button class="btn-close" id="btnModalClose">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="input-group">
+                    <label>网站/应用名称</label>
+                    <input type="text" id="entryName" placeholder="例如: Google">
+                </div>
+                <div class="input-group">
+                    <label>网址 (可选)</label>
+                    <input type="url" id="entryUrl" placeholder="https://example.com">
+                </div>
+                <div class="input-group">
+                    <label>用户名/邮箱</label>
+                    <input type="text" id="entryUsername" placeholder="your@email.com">
+                </div>
+                <div class="input-group">
+                    <label>密码</label>
+                    <div class="password-input-wrapper">
+                        <input type="password" id="entryPassword" placeholder="输入密码">
+                        <button class="btn-toggle-pw" id="btnTogglePw">👁️</button>
+                        <button class="btn-gen-pw" id="btnGenPw" title="生成随机密码">🎲</button>
+                    </div>
+                </div>
+                <div class="input-group">
+                    <label>分类</label>
+                    <select id="entryCategory">
+                        <!-- 动态渲染，JS 填充 -->
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label>备注 (可选)</label>
+                    <textarea id="entryNotes" rows="2" placeholder="添加备注..."></textarea>
+                </div>
+                <input type="hidden" id="entryId">
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" id="btnModalCancel">取消</button>
+                <button class="btn-primary" id="btnModalSave">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 密码生成器弹窗 -->
+    <div id="generatorModal" class="modal">
+        <div class="modal-backdrop"></div>
+        <div class="glass-card modal-card modal-sm">
+            <div class="modal-header">
+                <h3>密码生成器</h3>
+                <button class="btn-close" id="btnGenClose">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="generated-pw-display" id="generatedPassword">点击生成</div>
+                <div class="gen-options">
+                    <div class="gen-option">
+                        <label>长度: <span id="lenValue">16</span></label>
+                        <input type="range" id="pwLength" min="8" max="32" value="16">
+                    </div>
+                    <div class="gen-checks">
+                        <label class="check-label"><input type="checkbox" id="genUpper" checked> 大写字母</label>
+                        <label class="check-label"><input type="checkbox" id="genLower" checked> 小写字母</label>
+                        <label class="check-label"><input type="checkbox" id="genNumber" checked> 数字</label>
+                        <label class="check-label"><input type="checkbox" id="genSymbol" checked> 符号</label>
+                    </div>
+                </div>
+                <button class="btn-primary btn-full" id="btnGenerate">生成新密码</button>
+                <button class="btn-secondary btn-full" id="btnCopyGen">📋 复制密码</button>
+                <button class="btn-outline btn-full" id="btnUseGen">✅ 使用此密码</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 设置弹窗 -->
+    <div id="settingsModal" class="modal">
+        <div class="modal-backdrop"></div>
+        <div class="glass-card modal-card modal-sm">
+            <div class="modal-header">
+                <h3>设置</h3>
+                <button class="btn-close" id="btnSettingsClose">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="input-group">
+                    <label>保险库名称</label>
+                    <input type="text" id="settingsVaultName" placeholder="Krypton Vault">
+                </div>
+                <div class="input-group">
+                    <label>自动锁定 (分钟, 0=禁用)</label>
+                    <input type="number" id="settingsAutoLock" min="0" max="60" value="5">
+                </div>
+                <div class="input-group">
+                    <label>修改主密码</label>
+                    <input type="password" id="settingsOldMaster" placeholder="当前主密码">
+                    <input type="password" id="settingsNewMaster" placeholder="新主密码" style="margin-top:8px">
+                </div>
+                <div class="settings-actions">
+                    <button class="btn-outline btn-full" id="btnExport">📤 导出数据</button>
+                    <button class="btn-outline btn-full" id="btnImport">📥 导入数据</button>
+                    <input type="file" id="importFile" accept=".json" class="hidden">
+                </div>
+                <button class="btn-danger btn-full" id="btnResetAll">🗑️ 重置所有数据</button>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-primary btn-full" id="btnSettingsSave">保存设置</button>
+            </div>
+        </div>
+    </div>
+
+        <!-- Toast -->
+    <div id="toast" class="toast"></div>
+
+    <!-- 分类添加弹窗（放在 category-bar 外部避免被 overflow 裁剪） -->
+    <div class="cat-add-popup" id="catAddPopup">
+        <input type="text" id="catAddInput" placeholder="分类名称" maxlength="10" autocomplete="off">
+        <div class="cat-add-popup-actions">
+            <button class="btn-outline" id="catAddCancel">取消</button>
+            <button class="btn-primary" id="catAddConfirm">添加</button>
+        </div>
+    </div>
+
+    <!-- 删除确认弹窗 -->
+    <div class="confirm-overlay" id="confirmOverlay">
+        <div class="confirm-dialog glass-card">
+            <div class="confirm-icon">⚠️</div>
+            <p class="confirm-msg" id="confirmMsg">确定要删除吗？</p>
+            <p class="confirm-hint">此操作不可恢复</p>
+            <div class="confirm-actions">
+                <button class="btn-secondary" id="confirmCancel">取消</button>
+                <button class="btn-danger" id="confirmOk">确认删除</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/particles.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
