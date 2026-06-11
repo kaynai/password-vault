@@ -30,8 +30,38 @@
             <h1 class="app-title" contenteditable="true" spellcheck="false" id="appTitle">Krypton Vault</h1>
             <p class="lock-subtitle">点击标题可自定义名称</p>
 
-            <div id="setupSection">
-                <p class="setup-hint">首次使用？设置您的主密码</p>
+            <!-- 用户选择界面 -->
+            <div id="userSelectSection">
+                <p class="setup-hint">选择账号或创建新账号</p>
+                <div class="user-list" id="userList">
+                    <!-- 动态渲染 -->
+                </div>
+                <div id="noUsersHint" class="hidden">
+                    <p class="setup-hint" style="margin-top:10px;">还没有账号，请创建</p>
+                </div>
+                <button class="btn-outline btn-full" id="btnShowCreate" style="margin-top:14px;">+ 创建新账号</button>
+            </div>
+
+            <!-- 解锁界面（选好用户后输入密码） -->
+            <div id="unlockSection" class="hidden">
+                <p class="unlock-user-label">账号：<strong id="unlockUserName"></strong></p>
+                <div class="input-group">
+                    <input type="password" id="masterUnlock" placeholder="输入主密码解锁" autocomplete="off">
+                </div>
+                <button class="btn-primary" id="btnUnlock">解锁</button>
+                <p class="error-msg" id="unlockError"></p>
+                <div style="display:flex;gap:10px;margin-top:10px;">
+                    <button class="btn-link" id="btnBackToUsers">← 切换账号</button>
+                    <button class="btn-link" id="btnReset" style="color:var(--danger);">删除此账号</button>
+                </div>
+            </div>
+
+            <!-- 创建新账号 -->
+            <div id="setupSection" class="hidden">
+                <p class="setup-hint">创建新账号</p>
+                <div class="input-group">
+                    <input type="text" id="setupUsername" placeholder="用户名（如 Alice、Bob）" autocomplete="off" maxlength="20">
+                </div>
                 <div class="input-group">
                     <input type="password" id="masterSetup" placeholder="设置主密码" autocomplete="off">
                     <div class="password-strength" id="strengthBar"></div>
@@ -39,16 +69,8 @@
                 <div class="input-group">
                     <input type="password" id="masterSetupConfirm" placeholder="确认主密码" autocomplete="off">
                 </div>
-                <button class="btn-primary" id="btnSetup">创建保险库</button>
-            </div>
-
-            <div id="unlockSection" class="hidden">
-                <div class="input-group">
-                    <input type="password" id="masterUnlock" placeholder="输入主密码解锁" autocomplete="off">
-                </div>
-                <button class="btn-primary" id="btnUnlock">解锁</button>
-                <p class="error-msg" id="unlockError"></p>
-                <button class="btn-link" id="btnReset">重置保险库</button>
+                <button class="btn-primary" id="btnSetup">创建账号</button>
+                <button class="btn-link" id="btnBackFromCreate" style="margin-top:8px;">← 返回账号列表</button>
             </div>
         </div>
     </div>
