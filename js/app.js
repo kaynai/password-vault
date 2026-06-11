@@ -4,12 +4,12 @@
    ============================================ */
 
 // ============ 常量与状态 ============
-const STORAGE_KEY = 'kv_encrypted_vault';
-const SETTINGS_KEY = 'kv_settings';
-const SALT_KEY = 'kv_salt';
+const KV_USERS_KEY = 'kv_users';           // 用户注册表 [{username, userKey}]
+const STORAGE_PREFIX = 'kv_vault_';
+const SETTINGS_PREFIX = 'kv_settings_';
+const SALT_PREFIX = 'kv_salt_';
+const CUSTOM_CAT_PREFIX = 'kv_custom_categories_';
 const VAULT_VERSION = 1;
-
-const CUSTOM_CAT_KEY = 'kv_custom_categories';
 
 const PRESET_CATEGORIES = [
     { id: 'all',    name: '全部', icon: '🏠',  color: '#d946ef' },
@@ -36,6 +36,8 @@ function getCategoryInfo(catId) {
 }
 
 let appState = {
+    currentUser: null,        // 当前登录的用户名
+    currentUserKey: null,     // 当前用户的存储键哈希
     masterKey: null,          // CryptoKey
     masterPassword: null,     // 明文主密码（仅内存中保存用于重加密）
     entries: [],              // 解密后的密码条目列表
@@ -61,13 +63,21 @@ const dom = {
 
     // 锁定界面
     appTitle: $('#appTitle'),
+    userSelectSection: $('#userSelectSection'),
+    userList: $('#userList'),
+    noUsersHint: $('#noUsersHint'),
+    btnShowCreate: $('#btnShowCreate'),
     setupSection: $('#setupSection'),
+    setupUsername: $('#setupUsername'),
     unlockSection: $('#unlockSection'),
+    unlockUserName: $('#unlockUserName'),
     masterSetup: $('#masterSetup'),
     masterSetupConfirm: $('#masterSetupConfirm'),
     masterUnlock: $('#masterUnlock'),
     btnSetup: $('#btnSetup'),
     btnUnlock: $('#btnUnlock'),
+    btnBackToUsers: $('#btnBackToUsers'),
+    btnBackFromCreate: $('#btnBackFromCreate'),
     btnReset: $('#btnReset'),
     unlockError: $('#unlockError'),
     strengthBar: $('#strengthBar'),
@@ -131,6 +141,91 @@ const dom = {
     // Toast
     toast: $('#toast'),
 };
+
+// ============ 用户管理（多用户存储隔离） ============
+function userStorageKey(prefix, userKey) {
+    return prefix + (userKey || appState.currentUserKey || '');
+}
+
+function getRegisteredUsers() {
+    const raw = localStorage.getItem(KV_USERS_KEY);
+    return raw ? JSON.parse(raw) : [];
+}
+
+function saveRegisteredUsers(users) {
+    localStorage.setItem(KV_USERS_KEY, JSON.stringify(users));
+}
+
+async function hashUsername(username) {
+    // 用 SHA-256 生成存储键（避免特殊字符问题）
+    const data = new TextEncoder().encode(username.toLowerCase().trim());
+    const hash = await crypto.subtle.digest('SHA-256', data);
+    return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 24);
+}
+
+async function registerUser(username) {
+    const name = username.trim();
+    if (!name || name.length < 1) return null;
+    const users = getRegisteredUsers();
+    if (users.some(u => u.username.toLowerCase() === name.toLowerCase())) {
+        return null; // 用户名已存在
+    }
+    const userKey = await hashUsername(name);
+    users.push({ username: name, userKey });
+    saveRegisteredUsers(users);
+    return userKey;
+}
+
+function deleteUserAccount(username) {
+    const users = getRegisteredUsers();
+    const user = users.find(u => u.username === username);
+    if (!user) return;
+    // 清除该用户的所有存储数据
+    localStorage.removeItem(STORAGE_PREFIX + user.userKey);
+    localStorage.removeItem(SETTINGS_PREFIX + user.userKey);
+    localStorage.removeItem(SALT_PREFIX + user.userKey);
+    localStorage.removeItem(CUSTOM_CAT_PREFIX + user.userKey);
+    // 从注册表移除
+    saveRegisteredUsers(users.filter(u => u.username !== username));
+}
+
+function renderUserList() {
+    const users = getRegisteredUsers();
+    dom.noUsersHint.classList.toggle('hidden', users.length > 0);
+
+    if (users.length === 0) {
+        dom.userList.innerHTML = '';
+        return;
+    }
+
+    dom.userList.innerHTML = users.map(u =>
+        `<button class="user-chip" data-username="${escapeHtml(u.username)}">👤 ${escapeHtml(u.username)}</button>`
+    ).join('');
+}
+
+function showUserSelect() {
+    dom.setupSection.classList.add('hidden');
+    dom.unlockSection.classList.add('hidden');
+    dom.userSelectSection.classList.remove('hidden');
+    renderUserList();
+}
+
+function selectUserForUnlock(username) {
+    const users = getRegisteredUsers();
+    const user = users.find(u => u.username === username);
+    if (!user) return;
+
+    appState.currentUser = username;
+    appState.currentUserKey = user.userKey;
+
+    dom.userSelectSection.classList.add('hidden');
+    dom.setupSection.classList.add('hidden');
+    dom.unlockSection.classList.remove('hidden');
+    dom.unlockUserName.textContent = username;
+    dom.unlockError.textContent = '';
+    dom.masterUnlock.value = '';
+    dom.masterUnlock.focus();
+}
 
 // ============ 工具函数 ============
 function showToast(msg, type = '') {
@@ -237,47 +332,48 @@ async function decryptData(key, encryptedObj) {
 
 // ============ 持久化 ============
 function saveEncryptedVault(encryptedData) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(encryptedData));
+    localStorage.setItem(userStorageKey(STORAGE_PREFIX), JSON.stringify(encryptedData));
 }
 
 function getEncryptedVault() {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(userStorageKey(STORAGE_PREFIX));
     return raw ? JSON.parse(raw) : null;
 }
 
 function getSalt() {
-    let saltB64 = localStorage.getItem(SALT_KEY);
+    const saltKey = userStorageKey(SALT_PREFIX);
+    let saltB64 = localStorage.getItem(saltKey);
     if (!saltB64) {
         const salt = crypto.getRandomValues(new Uint8Array(16));
         saltB64 = arrayBufferToBase64(salt);
-        localStorage.setItem(SALT_KEY, saltB64);
+        localStorage.setItem(saltKey, saltB64);
     }
     return base64ToArrayBuffer(saltB64);
 }
 
 function loadSettings() {
-    const raw = localStorage.getItem(SETTINGS_KEY);
+    const raw = localStorage.getItem(userStorageKey(SETTINGS_PREFIX));
     if (raw) {
         try { Object.assign(appState.settings, JSON.parse(raw)); } catch {}
     }
 }
 
 function saveSettings() {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(appState.settings));
+    localStorage.setItem(userStorageKey(SETTINGS_PREFIX), JSON.stringify(appState.settings));
     dom.headerTitle.textContent = appState.settings.vaultName;
     dom.appTitle.textContent = appState.settings.vaultName;
     document.title = appState.settings.vaultName + ' — 密码管理器';
 }
 
 function loadCustomCategories() {
-    const raw = localStorage.getItem(CUSTOM_CAT_KEY);
+    const raw = localStorage.getItem(userStorageKey(CUSTOM_CAT_PREFIX));
     if (raw) {
         try { appState.customCategories = JSON.parse(raw); } catch { appState.customCategories = []; }
     }
 }
 
 function saveCustomCategories() {
-    localStorage.setItem(CUSTOM_CAT_KEY, JSON.stringify(appState.customCategories));
+    localStorage.setItem(userStorageKey(CUSTOM_CAT_PREFIX), JSON.stringify(appState.customCategories));
 }
 
 function generateCatColor(name) {
@@ -291,28 +387,18 @@ function generateCatColor(name) {
 
 // ============ 应用初始化 ============
 async function init() {
-    loadSettings();
-    loadCustomCategories();
     dom.headerTitle.textContent = appState.settings.vaultName;
     dom.appTitle.textContent = appState.settings.vaultName;
     document.title = appState.settings.vaultName + ' — 密码管理器';
     dom.settingsVaultName.value = appState.settings.vaultName;
     dom.settingsAutoLock.value = appState.settings.autoLockMinutes;
 
-    // 渲染分类栏（登录页也提前渲染好结构）
+    // 渲染分类栏（提前渲染结构）
     renderCategoryBar();
     renderCategoryDropdown();
 
-    const vault = getEncryptedVault();
-    if (vault) {
-        // 已有保险库，显示解锁
-        dom.setupSection.classList.add('hidden');
-        dom.unlockSection.classList.remove('hidden');
-    } else {
-        // 新用户
-        dom.setupSection.classList.remove('hidden');
-        dom.unlockSection.classList.add('hidden');
-    }
+    // 显示用户选择界面
+    showUserSelect();
 
     switchScreen('lock');
     bindEvents();
@@ -320,9 +406,18 @@ async function init() {
 
 // ============ 创建保险库 ============
 async function createVault() {
+    const username = dom.setupUsername.value.trim();
     const password = dom.masterSetup.value;
     const confirm = dom.masterSetupConfirm.value;
 
+    if (!username || username.length < 1) {
+        showToast('请输入用户名', 'error');
+        return;
+    }
+    if (username.length > 20) {
+        showToast('用户名不超过20个字符', 'error');
+        return;
+    }
     if (!password || password.length < 4) {
         showToast('密码长度至少4位', 'error');
         return;
@@ -332,9 +427,19 @@ async function createVault() {
         return;
     }
 
+    // 检查用户名是否已存在
+    const userKey = await registerUser(username);
+    if (!userKey) {
+        showToast('用户名已存在，请换一个', 'error');
+        return;
+    }
+
+    appState.currentUser = username;
+    appState.currentUserKey = userKey;
+
     const salt = getSalt();
     const key = await deriveKey(password, salt);
-    const entries = []; // 空保险库
+    const entries = [];
     const encrypted = await encryptData(key, { entries, version: VAULT_VERSION });
     saveEncryptedVault(encrypted);
 
@@ -342,12 +447,19 @@ async function createVault() {
     appState.masterPassword = password;
     appState.entries = entries;
 
+    // 新用户初始化设置
+    appState.settings = { vaultName: 'Krypton Vault', autoLockMinutes: 5 };
+    appState.customCategories = [];
+    saveSettings();
+    saveCustomCategories();
+
     switchScreen('main');
     renderEntries();
     startAutoLockTimer();
-    showToast('保险库创建成功！', 'success');
+    showToast(`账号「${username}」创建成功！`, 'success');
     dom.masterSetup.value = '';
     dom.masterSetupConfirm.value = '';
+    dom.setupUsername.value = '';
 }
 
 // ============ 解锁保险库 ============
@@ -355,6 +467,10 @@ async function unlockVault() {
     const password = dom.masterUnlock.value;
     if (!password) {
         showToast('请输入主密码', 'error');
+        return;
+    }
+    if (!appState.currentUserKey) {
+        dom.unlockError.textContent = '请先选择账号';
         return;
     }
 
@@ -377,33 +493,44 @@ async function unlockVault() {
     appState.masterKey = key;
     appState.masterPassword = password;
     appState.entries = data.entries || [];
+
+    // 加载该用户的设置和自定义分类
+    loadSettings();
+    loadCustomCategories();
+    dom.headerTitle.textContent = appState.settings.vaultName;
+    dom.appTitle.textContent = appState.settings.vaultName;
+    dom.settingsVaultName.value = appState.settings.vaultName;
+    dom.settingsAutoLock.value = appState.settings.autoLockMinutes;
+    renderCategoryBar();
+    renderCategoryDropdown();
+
     dom.unlockError.textContent = '';
     dom.masterUnlock.value = '';
 
     switchScreen('main');
     renderEntries();
     startAutoLockTimer();
-    showToast(`欢迎回来，共 ${appState.entries.length} 条记录`, 'success');
+    showToast(`欢迎「${appState.currentUser}」，共 ${appState.entries.length} 条记录`, 'success');
 }
 
 // ============ 锁定 ============
 function lockVault() {
     clearTimeout(appState.autoLockTimer);
+    appState.currentUser = null;
+    appState.currentUserKey = null;
     appState.masterKey = null;
     appState.masterPassword = null;
     appState.entries = [];
     appState.currentCategory = 'all';
     appState.selectedEntryId = null;
+    appState.customCategories = [];
 
     dom.searchInput.value = '';
     dom.entryList.innerHTML = '';
     dom.emptyState.classList.add('hidden');
 
-    const vault = getEncryptedVault();
-    dom.setupSection.classList.toggle('hidden', !!vault);
-    dom.unlockSection.classList.toggle('hidden', !vault);
-
     closeAllModals();
+    showUserSelect();
     switchScreen('lock');
 }
 
@@ -790,15 +917,43 @@ async function changeMasterPassword() {
     dom.settingsNewMaster.value = '';
 }
 
-// ============ 重置 ============
+// ============ 重置（删除当前锁定界面选中的用户） ============
+function resetCurrentUser() {
+    const username = appState.currentUser;
+    if (!username) return;
+    const confirmOverlay = document.getElementById('confirmOverlay');
+    const msgEl = document.getElementById('confirmMsg');
+    if (confirmOverlay && msgEl) {
+        msgEl.textContent = `确定要删除账号「${username}」及其所有密码数据吗？`;
+        _pendingDeleteUser = username;
+        confirmOverlay.classList.add('active');
+    } else if (confirm(`确定删除账号「${username}」吗？此操作不可恢复！`)) {
+        doResetUser(username);
+    }
+}
+
+let _pendingDeleteUser = null;
+
+function doResetUser(username) {
+    deleteUserAccount(username);
+    appState.currentUser = null;
+    appState.currentUserKey = null;
+    appState.masterKey = null;
+    appState.masterPassword = null;
+    appState.entries = [];
+    appState.customCategories = [];
+    showToast(`账号「${username}」已删除`, 'success');
+    showUserSelect();
+}
+
 async function resetAll() {
-    if (!confirm('⚠️ 确定要删除所有数据吗？此操作不可恢复！\n\n请确保已导出备份。')) return;
+    if (!confirm('⚠️ 确定要删除当前账号的所有密码数据吗？此操作不可恢复！\n\n请确保已导出备份。')) return;
     if (!confirm('再次确认：删除所有密码数据？')) return;
 
-    localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem(SALT_KEY);
-    localStorage.removeItem(SETTINGS_KEY);
-    localStorage.removeItem(CUSTOM_CAT_KEY);
+    localStorage.removeItem(userStorageKey(STORAGE_PREFIX));
+    localStorage.removeItem(userStorageKey(SALT_PREFIX));
+    localStorage.removeItem(userStorageKey(SETTINGS_PREFIX));
+    localStorage.removeItem(userStorageKey(CUSTOM_CAT_PREFIX));
 
     appState.entries = [];
     appState.masterKey = null;
@@ -810,7 +965,7 @@ async function resetAll() {
     showToast('所有数据已清除', 'success');
 
     setTimeout(() => {
-        location.reload();
+        lockVault();
     }, 500);
 }
 
@@ -915,6 +1070,43 @@ function deleteCustomCategory(catId) {
 
 // ============ 事件绑定 ============
 function bindEvents() {
+    // === 用户选择界面 ===
+    // 用户芯片点击（事件委托）
+    dom.userList.addEventListener('click', (e) => {
+        const chip = e.target.closest('.user-chip');
+        if (!chip) return;
+        const username = chip.dataset.username;
+        if (username) selectUserForUnlock(username);
+    });
+
+    // 显示创建账号表单
+    dom.btnShowCreate.addEventListener('click', () => {
+        dom.userSelectSection.classList.add('hidden');
+        dom.unlockSection.classList.add('hidden');
+        dom.setupSection.classList.remove('hidden');
+        dom.setupUsername.value = '';
+        dom.masterSetup.value = '';
+        dom.masterSetupConfirm.value = '';
+        dom.setupUsername.focus();
+    });
+
+    // 从解锁返回用户列表
+    dom.btnBackToUsers.addEventListener('click', () => {
+        appState.currentUser = null;
+        appState.currentUserKey = null;
+        dom.masterUnlock.value = '';
+        dom.unlockError.textContent = '';
+        showUserSelect();
+    });
+
+    // 从创建返回用户列表
+    dom.btnBackFromCreate.addEventListener('click', () => {
+        dom.setupUsername.value = '';
+        dom.masterSetup.value = '';
+        dom.masterSetupConfirm.value = '';
+        showUserSelect();
+    });
+
     // 创建保险库
     dom.btnSetup.addEventListener('click', createVault);
     dom.masterSetupConfirm.addEventListener('keydown', (e) => {
@@ -932,11 +1124,8 @@ function bindEvents() {
 
     // 锁定
     dom.btnLock.addEventListener('click', lockVault);
-    dom.btnReset.addEventListener('click', () => {
-        if (confirm('确定要重置保险库吗？所有数据将被清除。')) {
-            resetAll();
-        }
-    });
+    // 删除账号按钮（在解锁界面上）
+    dom.btnReset.addEventListener('click', resetCurrentUser);
 
     // 新增
     dom.btnAdd.addEventListener('click', openAddModal);
@@ -1162,15 +1351,22 @@ function bindEvents() {
     if (confirmOk) {
         confirmOk.addEventListener('click', async () => {
             const id = _pendingDeleteId;
+            const username = _pendingDeleteUser;
             confirmOverlay.classList.remove('active');
             _pendingDeleteId = null;
-            if (id) await doDeleteEntry(id);
+            _pendingDeleteUser = null;
+            if (username) {
+                doResetUser(username);
+            } else if (id) {
+                await doDeleteEntry(id);
+            }
         });
     }
     if (confirmCancel) {
         confirmCancel.addEventListener('click', () => {
             confirmOverlay.classList.remove('active');
             _pendingDeleteId = null;
+            _pendingDeleteUser = null;
         });
     }
     // 点击遮罩关闭
@@ -1179,6 +1375,7 @@ function bindEvents() {
             if (e.target === confirmOverlay) {
                 confirmOverlay.classList.remove('active');
                 _pendingDeleteId = null;
+                _pendingDeleteUser = null;
             }
         });
     }
@@ -1216,6 +1413,7 @@ function bindEvents() {
             if (confirmOverlay && confirmOverlay.classList.contains('active')) {
                 confirmOverlay.classList.remove('active');
                 _pendingDeleteId = null;
+                _pendingDeleteUser = null;
                 return;
             }
             closeAllModals();
